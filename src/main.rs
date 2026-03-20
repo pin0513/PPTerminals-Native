@@ -1,6 +1,7 @@
 mod terminal;
 mod farm;
 mod explorer;
+mod autocomplete;
 
 use eframe::egui;
 use terminal::TerminalTab;

@@ -3,6 +3,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use crate::autocomplete::AutocompleteState;
 
 pub struct TerminalTab {
     pub hotkey: String,
@@ -15,6 +16,7 @@ pub struct TerminalTab {
     rows: u16,
     input_buf: String,
     parser: Arc<Mutex<vt100::Parser>>,
+    pub autocomplete: AutocompleteState,
 }
 
 #[derive(Clone)]
@@ -155,6 +157,7 @@ impl TerminalTab {
             rows,
             input_buf: String::new(),
             parser,
+            autocomplete: AutocompleteState::new(),
         }
     }
 
@@ -168,16 +171,62 @@ impl TerminalTab {
         self.write_pty(b"claude --dangerously-skip-permissions\n");
     }
 
+    /// Read current input line from vt100 screen (strip prompt)
+    fn read_current_input(&self) -> String {
+        let p = self.parser.lock().unwrap();
+        let screen = p.screen();
+        let (cr, _cc) = screen.cursor_position();
+        let cols = screen.size().1;
+        let mut line = String::new();
+        for c in 0..cols {
+            if let Some(cell) = screen.cell(cr, c) {
+                line.push_str(cell.contents());
+            }
+        }
+        let line = line.trim_end().to_string();
+        // Strip prompt: find $, %, ❯, ➜ with shell context before it
+        if let Some(pos) = line.rfind(|c: char| "❯➜$%".contains(c)) {
+            let before = &line[..pos];
+            if before.contains('@') || before.contains('~') || before.contains('/') {
+                return line[pos+1..].trim_start().to_string();
+            }
+        }
+        String::new()
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         // Handle keyboard input
         let events = ctx.input(|i| i.events.clone());
         for event in &events {
             match event {
                 egui::Event::Text(text) => {
+                    // Check autocomplete interception
+                    // (Tab handled in Key event)
                     self.write_pty(text.as_bytes());
+                    // Update autocomplete
+                    let input = self.read_current_input();
+                    self.autocomplete.update(&input);
                 }
                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                    // Autocomplete interception
+                    if self.autocomplete.visible {
+                        match key {
+                            egui::Key::Tab => {
+                                let input = self.read_current_input();
+                                if let Some(insert) = self.autocomplete.accept(&input) {
+                                    self.write_pty(insert.as_bytes());
+                                }
+                                continue;
+                            }
+                            egui::Key::ArrowUp => { self.autocomplete.move_selection(-1); continue; }
+                            egui::Key::ArrowDown => { self.autocomplete.move_selection(1); continue; }
+                            egui::Key::Escape => { self.autocomplete.dismiss(); continue; }
+                            _ => {}
+                        }
+                    }
                     self.handle_key(*key, modifiers);
+                    // Reset autocomplete on Enter
+                    if *key == egui::Key::Enter { self.autocomplete.reset(); }
                 }
                 _ => {}
             }
@@ -250,6 +299,70 @@ impl TerminalTab {
                     col += 1;
                 }
             }
+        }
+
+        // ─── Autocomplete popup ───
+        if self.autocomplete.visible && !self.autocomplete.suggestions.is_empty() {
+            let ac_x = origin.x + cursor_c as f32 * char_w;
+            let ac_y = origin.y + (cursor_r as f32 + 1.0) * char_h;
+
+            let popup_w = 300.0_f32;
+            let item_h = 22.0_f32;
+            let popup_h = self.autocomplete.suggestions.len() as f32 * item_h + 24.0;
+
+            // Background
+            painter.rect_filled(
+                egui::Rect::from_min_size(egui::Pos2::new(ac_x, ac_y), egui::Vec2::new(popup_w, popup_h)),
+                4.0, egui::Color32::from_rgb(28, 33, 40),
+            );
+            painter.rect_stroke(
+                egui::Rect::from_min_size(egui::Pos2::new(ac_x, ac_y), egui::Vec2::new(popup_w, popup_h)),
+                4.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(48, 54, 61)), egui::StrokeKind::Outside,
+            );
+
+            for (i, s) in self.autocomplete.suggestions.iter().enumerate() {
+                let iy = ac_y + 2.0 + i as f32 * item_h;
+                let selected = i == self.autocomplete.selected;
+
+                if selected {
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(egui::Pos2::new(ac_x + 2.0, iy), egui::Vec2::new(popup_w - 4.0, item_h)),
+                        2.0, egui::Color32::from_rgb(38, 79, 120),
+                    );
+                }
+
+                let kind_icon = match s.kind {
+                    crate::autocomplete::CompletionKind::Command => "▸",
+                    crate::autocomplete::CompletionKind::Flag => "⚑",
+                    crate::autocomplete::CompletionKind::Option => "◆",
+                    crate::autocomplete::CompletionKind::Subcommand => "▸",
+                };
+                let kind_color = match s.kind {
+                    crate::autocomplete::CompletionKind::Command => egui::Color32::from_rgb(63, 185, 80),
+                    crate::autocomplete::CompletionKind::Flag => egui::Color32::from_rgb(88, 166, 255),
+                    crate::autocomplete::CompletionKind::Option => egui::Color32::from_rgb(210, 153, 34),
+                    crate::autocomplete::CompletionKind::Subcommand => egui::Color32::from_rgb(63, 185, 80),
+                };
+
+                painter.text(egui::Pos2::new(ac_x + 8.0, iy + 3.0), egui::Align2::LEFT_TOP, kind_icon,
+                    egui::FontId::monospace(10.0), kind_color);
+                painter.text(egui::Pos2::new(ac_x + 22.0, iy + 3.0), egui::Align2::LEFT_TOP, &s.name,
+                    egui::FontId::monospace(12.0), egui::Color32::from_rgb(230, 237, 243));
+                if !s.description.is_empty() {
+                    let desc: String = s.description.chars().take(30).collect();
+                    painter.text(egui::Pos2::new(ac_x + 140.0, iy + 4.0), egui::Align2::LEFT_TOP, &desc,
+                        egui::FontId::monospace(10.0), egui::Color32::from_rgb(72, 79, 88));
+                }
+            }
+
+            // Hint
+            painter.text(
+                egui::Pos2::new(ac_x + 8.0, ac_y + popup_h - 18.0),
+                egui::Align2::LEFT_TOP,
+                "Tab accept  ↑↓ navigate  Esc dismiss",
+                egui::FontId::monospace(9.0),
+                egui::Color32::from_rgb(72, 79, 88),
+            );
         }
     }
 
