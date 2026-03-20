@@ -25,6 +25,7 @@ struct Cell {
     fg: egui::Color32,
     bg: egui::Color32,
     bold: bool,
+    wide: bool,
 }
 
 impl Default for Cell {
@@ -34,6 +35,7 @@ impl Default for Cell {
             fg: egui::Color32::from_rgb(230, 230, 230),
             bg: egui::Color32::TRANSPARENT,
             bold: false,
+            wide: false,
         }
     }
 }
@@ -128,6 +130,7 @@ impl TerminalTab {
                                         fg: vt_color_to_egui(cell.fgcolor(), true),
                                         bg: vt_color_to_egui(cell.bgcolor(), false),
                                         bold: cell.bold(),
+                                        wide: cell.is_wide(),
                                     });
                                 } else {
                                     row.push(Cell::default());
@@ -264,11 +267,7 @@ impl TerminalTab {
                     egui::Color32::TRANSPARENT
                 };
                 if bg != egui::Color32::TRANSPARENT {
-                    let cell_w = if cell.ch.len() > 1 && !cell.ch.chars().all(|c| c.is_ascii()) {
-                        char_w * 2.0 // wide char
-                    } else {
-                        char_w
-                    };
+                    let cell_w = if cell.wide { char_w * 2.0 } else { char_w };
                     painter.rect_filled(
                         egui::Rect::from_min_size(egui::Pos2::new(x, y), egui::Vec2::new(cell_w, char_h)),
                         0.0, bg,
@@ -292,12 +291,8 @@ impl TerminalTab {
                     );
                 }
 
-                // Advance column (wide chars take 2 cols)
-                if cell.ch.len() > 1 && !cell.ch.chars().all(|c| c.is_ascii()) {
-                    col += 2;
-                } else {
-                    col += 1;
-                }
+                // Advance column
+                col += if cell.wide { 2 } else { 1 };
             }
         }
 
