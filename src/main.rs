@@ -210,43 +210,95 @@ impl eframe::App for App {
         });
 
         // ─── Tab bar with styled tabs ───
-        egui::TopBottomPanel::top("tabs").min_height(32.0).show(ctx, |ui| {
+        egui::TopBottomPanel::top("tabs").min_height(36.0).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 let tab_count = self.tabs.len();
                 let active = self.active_tab;
                 let mut clicked_tab: Option<usize> = None;
-                let mut close_tab: Option<usize> = None;
+                let mut close_tab_req: Option<usize> = None;
 
                 for i in 0..tab_count {
                     let is_active = i == active;
                     let hotkey = self.tabs[i].hotkey.clone();
                     let title = self.tabs[i].title.clone();
-                    let bg = if is_active { egui::Color32::from_rgb(10, 14, 20) } else { egui::Color32::TRANSPARENT };
-                    let fg = if is_active { egui::Color32::from_rgb(230, 230, 230) } else { egui::Color32::from_rgb(139, 148, 158) };
+                    let is_completed = self.tab_completed.get(i).copied().unwrap_or(false);
+
+                    let bg = if is_active {
+                        egui::Color32::from_rgb(22, 27, 34)
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    };
+                    let fg = if is_active {
+                        egui::Color32::from_rgb(230, 230, 230)
+                    } else {
+                        egui::Color32::from_rgb(139, 148, 158)
+                    };
+                    let badge_color = if is_active {
+                        egui::Color32::from_rgb(88, 166, 255)
+                    } else {
+                        egui::Color32::from_rgb(72, 79, 88)
+                    };
 
                     let frame = egui::Frame::NONE
                         .fill(bg)
                         .inner_margin(egui::Margin::symmetric(10, 4))
                         .rounding(egui::Rounding { nw: 6, ne: 6, sw: 0, se: 0 });
 
-                    frame.show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(&hotkey).small().color(
-                                if is_active { egui::Color32::from_rgb(88, 166, 255) } else { egui::Color32::from_rgb(72, 79, 88) }
-                            ).monospace());
-                            if ui.selectable_label(false, egui::RichText::new(&title).color(fg)).clicked() {
-                                clicked_tab = Some(i);
-                            }
-                            if ui.small_button("×").clicked() {
-                                close_tab = Some(i);
+                    let tab_resp = frame.show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                // Hotkey badge (small A/B/C...)
+                                ui.label(
+                                    egui::RichText::new(&hotkey)
+                                        .small()
+                                        .color(badge_color)
+                                        .monospace(),
+                                );
+                                // Green checkmark for completed sessions
+                                if is_completed {
+                                    ui.label(
+                                        egui::RichText::new("✓")
+                                            .small()
+                                            .color(egui::Color32::from_rgb(63, 185, 80)),
+                                    );
+                                }
+                                // Tab title (directory name)
+                                if ui.selectable_label(
+                                    false,
+                                    egui::RichText::new(&title).color(fg),
+                                ).clicked() {
+                                    clicked_tab = Some(i);
+                                }
+                                // Close button
+                                if ui.small_button("×").clicked() {
+                                    close_tab_req = Some(i);
+                                }
+                            });
+                            // Active tab: blue underline at bottom of tab area
+                            if is_active {
+                                let rect = ui.min_rect();
+                                let underline = egui::Rect::from_min_max(
+                                    egui::pos2(rect.min.x, rect.max.y - 2.0),
+                                    egui::pos2(rect.max.x, rect.max.y),
+                                );
+                                ui.painter().rect_filled(
+                                    underline,
+                                    egui::Rounding::ZERO,
+                                    egui::Color32::from_rgb(88, 166, 255),
+                                );
                             }
                         });
                     });
+
+                    // Clicking the frame background also activates the tab
+                    if tab_resp.response.clicked() {
+                        clicked_tab = Some(i);
+                    }
                 }
 
                 if let Some(i) = clicked_tab { self.active_tab = i; }
-                if let Some(i) = close_tab { self.request_close_tab(i); }
+                if let Some(i) = close_tab_req { self.request_close_tab(i); }
 
                 // New tab button
                 if ui.button(egui::RichText::new("+").size(16.0)).clicked() { self.new_tab(); }
@@ -256,6 +308,7 @@ impl eframe::App for App {
                     let mut tab = TerminalTab::new(&hotkey.to_string());
                     tab.launch_claude();
                     self.tabs.push(tab);
+                    self.tab_completed.push(false);
                     self.active_tab = self.tabs.len() - 1;
                 }
                 // Farm button
@@ -366,9 +419,7 @@ impl eframe::App for App {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
-                    let idx = self.close_confirm_tab.unwrap();
-                    let title = self.tabs.get(idx).map(|t| t.title.clone()).unwrap_or_default();
-                    ui.label(format!("Close \"{}\"? This session will be terminated.", title));
+                    ui.label("Close Terminal? This session will be terminated.");
                     ui.horizontal(|ui| {
                         if ui.button("Cancel").clicked() { self.close_confirm_tab = None; }
                         if ui.button(egui::RichText::new("Close").color(egui::Color32::from_rgb(248, 81, 73))).clicked() {
