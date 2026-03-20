@@ -20,6 +20,19 @@ fn main() -> eframe::Result<()> {
         "PPTerminals Native",
         options,
         Box::new(|cc| {
+            // Load CJK font for Chinese/Japanese/Korean support
+            let mut fonts = egui::FontDefinitions::default();
+            fonts.font_data.insert(
+                "system_cjk".to_owned(),
+                std::sync::Arc::new(egui::FontData::from_static(include_bytes!("/System/Library/Fonts/Hiragino Sans GB.ttc"))),
+            );
+            // Add CJK as fallback for both proportional and monospace
+            fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap()
+                .push("system_cjk".to_owned());
+            fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap()
+                .push("system_cjk".to_owned());
+            cc.egui_ctx.set_fonts(fonts);
+
             let mut style = (*cc.egui_ctx.style()).clone();
             style.visuals = egui::Visuals::dark();
             cc.egui_ctx.set_style(style);
