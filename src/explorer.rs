@@ -19,13 +19,15 @@ pub struct FileExplorer {
     root: PathBuf,
     tree: Vec<TreeNode>,
     show_hidden: bool,
+    /// Path to paste into terminal (set on click, consumed by App)
+    pub pending_path: Option<String>,
 }
 
 impl FileExplorer {
     pub fn new() -> Self {
         let root = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let tree = load_dir(&root);
-        Self { root, tree, show_hidden: false }
+        Self { root, tree, show_hidden: false, pending_path: None }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -54,10 +56,15 @@ impl FileExplorer {
         egui::ScrollArea::vertical().show(ui, |ui| {
             let show_hidden = self.show_hidden;
             let mut navigate_to: Option<PathBuf> = None;
+            let mut paste_path: Option<String> = None;
 
             for node in &mut self.tree {
                 if !show_hidden && node.entry.is_hidden { continue; }
-                Self::render_node(ui, node, 0, show_hidden, &mut navigate_to);
+                Self::render_node(ui, node, 0, show_hidden, &mut navigate_to, &mut paste_path);
+            }
+
+            if paste_path.is_some() {
+                self.pending_path = paste_path;
             }
 
             if let Some(path) = navigate_to {
@@ -71,7 +78,7 @@ impl FileExplorer {
         ui.label(egui::RichText::new(self.root.to_string_lossy().to_string()).small().color(egui::Color32::from_rgb(72, 79, 88)));
     }
 
-    fn render_node(ui: &mut egui::Ui, node: &mut TreeNode, depth: usize, show_hidden: bool, navigate_to: &mut Option<PathBuf>) {
+    fn render_node(ui: &mut egui::Ui, node: &mut TreeNode, depth: usize, show_hidden: bool, navigate_to: &mut Option<PathBuf>, paste_path: &mut Option<String>) {
         let indent = depth as f32 * 16.0 + 4.0;
 
         ui.horizontal(|ui| {
@@ -86,21 +93,39 @@ impl FileExplorer {
                     }
                 }
                 let color = egui::Color32::from_rgb(230, 230, 230);
-                if ui.link(egui::RichText::new(format!("📁 {}", node.entry.name)).color(color)).clicked() {
+                let resp = ui.link(egui::RichText::new(format!("📁 {}", node.entry.name)).color(color));
+                if resp.clicked() {
                     node.expanded = !node.expanded;
                     if node.expanded && node.children.is_none() {
                         node.children = Some(load_dir(&node.entry.path));
                     }
                 }
+                // Secondary click (right-click) or middle-click → paste path to terminal
+                if resp.secondary_clicked() || resp.middle_clicked() {
+                    let p = node.entry.path.to_string_lossy().to_string();
+                    *paste_path = Some(if p.contains(' ') { format!("\"{}\" ", p) } else { format!("{} ", p) });
+                }
+                resp.on_hover_text(node.entry.path.to_string_lossy());
             } else {
-                ui.add_space(18.0); // align with folder icons
+                ui.add_space(18.0);
                 let color = if node.entry.is_hidden {
                     egui::Color32::from_rgb(72, 79, 88)
                 } else {
                     egui::Color32::from_rgb(200, 200, 200)
                 };
                 let icon = file_icon(&node.entry.name);
-                ui.label(egui::RichText::new(format!("{} {}", icon, node.entry.name)).color(color));
+                let resp = ui.link(egui::RichText::new(format!("{} {}", icon, node.entry.name)).color(color));
+                // Right-click → paste path to terminal
+                if resp.secondary_clicked() || resp.middle_clicked() {
+                    let p = node.entry.path.to_string_lossy().to_string();
+                    *paste_path = Some(if p.contains(' ') { format!("\"{}\" ", p) } else { format!("{} ", p) });
+                }
+                // Single click file → also paste path
+                if resp.clicked() {
+                    let p = node.entry.path.to_string_lossy().to_string();
+                    *paste_path = Some(if p.contains(' ') { format!("\"{}\" ", p) } else { format!("{} ", p) });
+                }
+                resp.on_hover_text(node.entry.path.to_string_lossy());
             }
         });
 
@@ -109,7 +134,7 @@ impl FileExplorer {
             if let Some(ref mut children) = node.children {
                 for child in children.iter_mut() {
                     if !show_hidden && child.entry.is_hidden { continue; }
-                    Self::render_node(ui, child, depth + 1, show_hidden, navigate_to);
+                    Self::render_node(ui, child, depth + 1, show_hidden, navigate_to, paste_path);
                 }
             }
         }

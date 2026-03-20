@@ -403,6 +403,10 @@ impl TerminalTab {
         }
     }
 
+    pub fn write_pty_public(&mut self, data: &[u8]) {
+        self.write_pty(data);
+    }
+
     fn write_pty(&mut self, data: &[u8]) {
         if let Some(ref mut writer) = self.writer {
             let _ = writer.write_all(data);

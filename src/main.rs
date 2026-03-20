@@ -253,6 +253,13 @@ impl eframe::App for App {
             });
         }
 
+        // ─── Explorer → Terminal path paste ───
+        if let Some(path) = self.explorer.pending_path.take() {
+            if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+                tab.write_pty_public(path.as_bytes());
+            }
+        }
+
         // ─── Terminal ───
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(tab) = self.tabs.get_mut(self.active_tab) {
