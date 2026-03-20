@@ -177,33 +177,74 @@ impl TerminalTab {
             }
         }
 
-        // Render terminal grid
+        // Render terminal grid using painter (zero spacing, monospace)
         let buffer = self.screen_buffer.lock().unwrap().clone();
         let (cursor_r, cursor_c) = *self.cursor.lock().unwrap();
         let font = egui::FontId::monospace(14.0);
+        let char_w = 8.4_f32;
+        let char_h = 18.0_f32;
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for (r, row) in buffer.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    for (c, cell) in row.iter().enumerate() {
-                        let is_cursor = r as u16 == cursor_r && c as u16 == cursor_c;
-                        let text_color = if is_cursor { egui::Color32::from_rgb(10, 14, 20) } else { cell.fg };
-                        let bg_color = if is_cursor { egui::Color32::from_rgb(88, 166, 255) } else { cell.bg };
+        let (response, painter) = ui.allocate_painter(
+            egui::Vec2::new(ui.available_width(), buffer.len() as f32 * char_h),
+            egui::Sense::click(),
+        );
+        let origin = response.rect.min;
 
-                        let text = egui::RichText::new(&cell.ch)
-                            .font(font.clone())
-                            .color(text_color)
-                            .background_color(bg_color);
+        // Background
+        painter.rect_filled(response.rect, 0.0, egui::Color32::from_rgb(10, 14, 20));
 
-                        if cell.bold {
-                            ui.label(text.strong());
-                        } else {
-                            ui.label(text);
-                        }
-                    }
-                });
+        for (r, row) in buffer.iter().enumerate() {
+            let mut col = 0usize;
+            for cell in row.iter() {
+                let x = origin.x + col as f32 * char_w;
+                let y = origin.y + r as f32 * char_h;
+                let is_cursor = r as u16 == cursor_r && col as u16 == cursor_c;
+
+                // Background
+                let bg = if is_cursor {
+                    egui::Color32::from_rgb(88, 166, 255)
+                } else if cell.bg != egui::Color32::TRANSPARENT {
+                    cell.bg
+                } else {
+                    egui::Color32::TRANSPARENT
+                };
+                if bg != egui::Color32::TRANSPARENT {
+                    let cell_w = if cell.ch.len() > 1 && !cell.ch.chars().all(|c| c.is_ascii()) {
+                        char_w * 2.0 // wide char
+                    } else {
+                        char_w
+                    };
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(egui::Pos2::new(x, y), egui::Vec2::new(cell_w, char_h)),
+                        0.0, bg,
+                    );
+                }
+
+                // Text
+                let fg = if is_cursor { egui::Color32::from_rgb(10, 14, 20) } else { cell.fg };
+                if cell.ch != " " {
+                    let f = if cell.bold {
+                        egui::FontId::new(14.0, egui::FontFamily::Monospace)
+                    } else {
+                        font.clone()
+                    };
+                    painter.text(
+                        egui::Pos2::new(x, y),
+                        egui::Align2::LEFT_TOP,
+                        &cell.ch,
+                        f,
+                        fg,
+                    );
+                }
+
+                // Advance column (wide chars take 2 cols)
+                if cell.ch.len() > 1 && !cell.ch.chars().all(|c| c.is_ascii()) {
+                    col += 2;
+                } else {
+                    col += 1;
+                }
             }
-        });
+        }
     }
 
     fn handle_key(&mut self, key: egui::Key, mods: &egui::Modifiers) {
