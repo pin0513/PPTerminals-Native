@@ -162,6 +162,12 @@ impl TerminalTab {
         self.writer = None;
     }
 
+    pub fn launch_claude(&mut self) {
+        self.title = "Claude".to_string();
+        // Delay to let PTY init
+        self.write_pty(b"claude --dangerously-skip-permissions\n");
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         // Handle keyboard input
         let events = ctx.input(|i| i.events.clone());
