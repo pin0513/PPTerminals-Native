@@ -301,6 +301,36 @@ impl TerminalTab {
             }
         }
 
+        // ─── Drop zone: accept dragged paths from Explorer ───
+        let drop_resp = ui.interact(response.rect, ui.id().with("drop"), egui::Sense::hover());
+        if drop_resp.hovered() {
+            // Check if something is being dragged
+            if let Some(payload) = egui::DragAndDrop::payload::<String>(ui.ctx()) {
+                // Show drop indicator
+                painter.rect_stroke(
+                    response.rect,
+                    4.0,
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(88, 166, 255)),
+                    egui::StrokeKind::Inside,
+                );
+                painter.text(
+                    response.rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "Drop to insert path",
+                    egui::FontId::monospace(14.0),
+                    egui::Color32::from_rgb(88, 166, 255),
+                );
+            }
+        }
+        // Handle drop
+        if drop_resp.hovered() {
+            if let Some(payload) = egui::DragAndDrop::take_payload::<String>(ui.ctx()) {
+                let path = (*payload).clone();
+                let escaped = if path.contains(' ') { format!("\"{}\" ", path) } else { format!("{} ", path) };
+                self.write_pty(escaped.as_bytes());
+            }
+        }
+
         // ─── Autocomplete popup ───
         if self.autocomplete.visible && !self.autocomplete.suggestions.is_empty() {
             let ac_x = origin.x + cursor_c as f32 * char_w;

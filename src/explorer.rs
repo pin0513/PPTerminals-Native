@@ -84,6 +84,9 @@ impl FileExplorer {
         ui.horizontal(|ui| {
             ui.add_space(indent);
 
+            let path_str = node.entry.path.to_string_lossy().to_string();
+            let item_id = egui::Id::new(&path_str);
+
             if node.entry.is_dir {
                 let icon = if node.expanded { "▾" } else { "▸" };
                 if ui.small_button(icon).clicked() {
@@ -93,19 +96,17 @@ impl FileExplorer {
                     }
                 }
                 let color = egui::Color32::from_rgb(230, 230, 230);
-                let resp = ui.link(egui::RichText::new(format!("📁 {}", node.entry.name)).color(color));
+                // Draggable folder
+                let resp = ui.dnd_drag_source(item_id, path_str.clone(), |ui| {
+                    ui.label(egui::RichText::new(format!("📁 {}", node.entry.name)).color(color));
+                }).response;
                 if resp.clicked() {
                     node.expanded = !node.expanded;
                     if node.expanded && node.children.is_none() {
                         node.children = Some(load_dir(&node.entry.path));
                     }
                 }
-                // Secondary click (right-click) or middle-click → paste path to terminal
-                if resp.secondary_clicked() || resp.middle_clicked() {
-                    let p = node.entry.path.to_string_lossy().to_string();
-                    *paste_path = Some(if p.contains(' ') { format!("\"{}\" ", p) } else { format!("{} ", p) });
-                }
-                resp.on_hover_text(node.entry.path.to_string_lossy());
+                resp.on_hover_text(&path_str);
             } else {
                 ui.add_space(18.0);
                 let color = if node.entry.is_hidden {
@@ -113,19 +114,12 @@ impl FileExplorer {
                 } else {
                     egui::Color32::from_rgb(200, 200, 200)
                 };
-                let icon = file_icon(&node.entry.name);
-                let resp = ui.link(egui::RichText::new(format!("{} {}", icon, node.entry.name)).color(color));
-                // Right-click → paste path to terminal
-                if resp.secondary_clicked() || resp.middle_clicked() {
-                    let p = node.entry.path.to_string_lossy().to_string();
-                    *paste_path = Some(if p.contains(' ') { format!("\"{}\" ", p) } else { format!("{} ", p) });
-                }
-                // Single click file → also paste path
-                if resp.clicked() {
-                    let p = node.entry.path.to_string_lossy().to_string();
-                    *paste_path = Some(if p.contains(' ') { format!("\"{}\" ", p) } else { format!("{} ", p) });
-                }
-                resp.on_hover_text(node.entry.path.to_string_lossy());
+                let file_ic = file_icon(&node.entry.name);
+                // Draggable file
+                let resp = ui.dnd_drag_source(item_id, path_str.clone(), |ui| {
+                    ui.label(egui::RichText::new(format!("{} {}", file_ic, node.entry.name)).color(color));
+                }).response;
+                resp.on_hover_text(&path_str);
             }
         });
 
