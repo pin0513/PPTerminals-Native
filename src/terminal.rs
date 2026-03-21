@@ -18,6 +18,10 @@ pub struct TerminalTab {
     parser: Arc<Mutex<vt100::Parser>>,
     pub autocomplete: AutocompleteState,
     frame: u64,
+    // Mouse selection
+    selection_start: Option<(usize, usize)>, // (row, col)
+    selection_end: Option<(usize, usize)>,
+    is_selecting: bool,
 }
 
 #[derive(Clone)]
@@ -163,6 +167,9 @@ impl TerminalTab {
             parser,
             autocomplete: AutocompleteState::new(),
             frame: 0,
+            selection_start: None,
+            selection_end: None,
+            is_selecting: false,
         }
     }
 
@@ -224,10 +231,15 @@ impl TerminalTab {
             let all_text = self.get_visible_text();
             ctx.copy_text(all_text);
         }
-        // Cmd+C → copy current line (or all if nothing specific)
+        // Cmd+C → copy selection (or current line if no selection)
         if ctx.input(|i| i.key_pressed(egui::Key::C) && i.modifiers.command) {
-            let line = self.get_current_line();
-            ctx.copy_text(line);
+            if self.selection_start.is_some() && self.selection_end.is_some() {
+                let text = self.get_selected_text();
+                ctx.copy_text(text);
+            } else {
+                let line = self.get_current_line();
+                ctx.copy_text(line);
+            }
         }
         // Cmd+V → paste clipboard into PTY
         if ctx.input(|i| i.key_pressed(egui::Key::V) && i.modifiers.command) {
@@ -331,10 +343,37 @@ impl TerminalTab {
             egui::Sense::click_and_drag(),
         );
 
-        // Request keyboard focus so we receive key events
+        // Request keyboard focus
         let term_id = response.id;
         if response.clicked() || !ctx.memory(|m| m.has_focus(term_id)) {
             ctx.memory_mut(|m| m.request_focus(term_id));
+        }
+
+        // ─── Mouse selection ───
+        let origin = response.rect.min;
+        if response.drag_started() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let col = ((pos.x - origin.x) / char_w) as usize;
+                let row = ((pos.y - origin.y) / char_h) as usize;
+                self.selection_start = Some((row, col));
+                self.selection_end = Some((row, col));
+                self.is_selecting = true;
+            }
+        }
+        if response.dragged() && self.is_selecting {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let col = ((pos.x - origin.x) / char_w).max(0.0) as usize;
+                let row = ((pos.y - origin.y) / char_h).max(0.0) as usize;
+                self.selection_end = Some((row, col));
+            }
+        }
+        if response.drag_stopped() {
+            self.is_selecting = false;
+        }
+        // Click without drag clears selection
+        if response.clicked() && !response.dragged() {
+            self.selection_start = None;
+            self.selection_end = None;
         }
         let origin = response.rect.min;
 
@@ -348,17 +387,34 @@ impl TerminalTab {
                 let y = origin.y + r as f32 * char_h;
                 let is_cursor = r as u16 == cursor_r && col as u16 == cursor_c;
 
-                // Background (normal cell bg, NOT cursor)
-                let bg = if cell.bg != egui::Color32::TRANSPARENT {
-                    cell.bg
+                // Check if cell is in selection range
+                let in_selection = if let (Some(start), Some(end)) = (self.selection_start, self.selection_end) {
+                    let (sr, sc) = if start <= end { start } else { end };
+                    let (er, ec) = if start <= end { end } else { start };
+                    if sr == er {
+                        r == sr && col >= sc && col <= ec
+                    } else if r == sr {
+                        col >= sc
+                    } else if r == er {
+                        col <= ec
+                    } else {
+                        r > sr && r < er
+                    }
                 } else {
-                    egui::Color32::TRANSPARENT
+                    false
                 };
-                if bg != egui::Color32::TRANSPARENT {
-                    let cell_w = if cell.wide { char_w * 2.0 } else { char_w };
+
+                // Background
+                let cell_w = if cell.wide { char_w * 2.0 } else { char_w };
+                if in_selection {
                     painter.rect_filled(
                         egui::Rect::from_min_size(egui::Pos2::new(x, y), egui::Vec2::new(cell_w, char_h)),
-                        0.0, bg,
+                        0.0, egui::Color32::from_rgb(38, 79, 120),
+                    );
+                } else if cell.bg != egui::Color32::TRANSPARENT {
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(egui::Pos2::new(x, y), egui::Vec2::new(cell_w, char_h)),
+                        0.0, cell.bg,
                     );
                 }
 
@@ -556,7 +612,39 @@ impl TerminalTab {
         text.trim_end().to_string()
     }
 
-    /// Get current line text (for Cmd+C)
+    /// Get text in mouse selection range
+    fn get_selected_text(&self) -> String {
+        let (start, end) = match (self.selection_start, self.selection_end) {
+            (Some(s), Some(e)) => if s <= e { (s, e) } else { (e, s) },
+            _ => return String::new(),
+        };
+        let p = self.parser.lock().unwrap();
+        let screen = p.screen();
+        let cols = screen.size().1;
+        let mut text = String::new();
+
+        for r in start.0..=end.0 {
+            let col_start = if r == start.0 { start.1 } else { 0 };
+            let col_end = if r == end.0 { end.1 } else { cols as usize };
+            let mut line = String::new();
+            for c in col_start..=col_end.min(cols as usize - 1) {
+                if let Some(cell) = screen.cell(r as u16, c as u16) {
+                    if cell.is_wide_continuation() { continue; }
+                    let s = cell.contents();
+                    line.push_str(if s.is_empty() { " " } else { s });
+                }
+            }
+            if r < end.0 {
+                text.push_str(line.trim_end());
+                text.push('\n');
+            } else {
+                text.push_str(line.trim_end());
+            }
+        }
+        text
+    }
+
+    /// Get current line text (for Cmd+C without selection)
     fn get_current_line(&self) -> String {
         let p = self.parser.lock().unwrap();
         let screen = p.screen();
