@@ -244,8 +244,14 @@ impl TerminalTab {
 
         let (response, painter) = ui.allocate_painter(
             egui::Vec2::new(ui.available_width(), buffer.len() as f32 * char_h),
-            egui::Sense::click(),
+            egui::Sense::click_and_drag(),
         );
+
+        // Request keyboard focus so we receive key events
+        let term_id = response.id;
+        if response.clicked() || !ctx.memory(|m| m.has_focus(term_id)) {
+            ctx.memory_mut(|m| m.request_focus(term_id));
+        }
         let origin = response.rect.min;
 
         // Background
