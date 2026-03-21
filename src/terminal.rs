@@ -198,40 +198,91 @@ impl TerminalTab {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        // Handle keyboard input
-        let events = ctx.input(|i| i.events.clone());
-        for event in &events {
-            match event {
-                egui::Event::Text(text) => {
-                    // Check autocomplete interception
-                    // (Tab handled in Key event)
-                    self.write_pty(text.as_bytes());
-                    // Update autocomplete
-                    let input = self.read_current_input();
-                    self.autocomplete.update(&input);
+        // ─── Keyboard input: use ctx.input() for reliable key detection ───
+        // Text input (regular characters)
+        let text_input: Vec<String> = ctx.input(|i| {
+            i.events.iter().filter_map(|e| {
+                if let egui::Event::Text(t) = e { Some(t.clone()) } else { None }
+            }).collect()
+        });
+        for text in &text_input {
+            self.write_pty(text.as_bytes());
+            let input = self.read_current_input();
+            self.autocomplete.update(&input);
+        }
+
+        // Special keys — check each directly
+        let mods = ctx.input(|i| i.modifiers);
+
+        // Autocomplete interception
+        if self.autocomplete.visible {
+            if ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
+                let input = self.read_current_input();
+                if let Some(insert) = self.autocomplete.accept(&input) {
+                    self.write_pty(insert.as_bytes());
                 }
-                egui::Event::Key { key, pressed: true, modifiers, .. } => {
-                    // Autocomplete interception
-                    if self.autocomplete.visible {
-                        match key {
-                            egui::Key::Tab => {
-                                let input = self.read_current_input();
-                                if let Some(insert) = self.autocomplete.accept(&input) {
-                                    self.write_pty(insert.as_bytes());
-                                }
-                                continue;
-                            }
-                            egui::Key::ArrowUp => { self.autocomplete.move_selection(-1); continue; }
-                            egui::Key::ArrowDown => { self.autocomplete.move_selection(1); continue; }
-                            egui::Key::Escape => { self.autocomplete.dismiss(); continue; }
-                            _ => {}
-                        }
+            } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                self.autocomplete.move_selection(-1);
+            } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                self.autocomplete.move_selection(1);
+            } else if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.autocomplete.dismiss();
+            } else if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.write_pty(b"\r");
+                self.autocomplete.reset();
+            }
+        } else {
+            // Normal key handling
+            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                let data = if mods.shift { b"\n".as_slice() } else { b"\r".as_slice() };
+                self.write_pty(data);
+                self.autocomplete.reset();
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Backspace)) {
+                if mods.command { self.write_pty(b"\x15"); }
+                else if mods.alt { self.write_pty(b"\x17"); }
+                else { self.write_pty(&[0x7f]); }
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
+                self.write_pty(b"\t");
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.write_pty(b"\x1b");
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                self.write_pty(b"\x1b[A");
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                self.write_pty(b"\x1b[B");
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+                if mods.command { self.write_pty(b"\x05"); }
+                else if mods.alt { self.write_pty(b"\x1bf"); }
+                else { self.write_pty(b"\x1b[C"); }
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+                if mods.command { self.write_pty(b"\x01"); }
+                else if mods.alt { self.write_pty(b"\x1bb"); }
+                else { self.write_pty(b"\x1b[D"); }
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Home)) { self.write_pty(b"\x01"); }
+            if ctx.input(|i| i.key_pressed(egui::Key::End)) { self.write_pty(b"\x05"); }
+            if ctx.input(|i| i.key_pressed(egui::Key::Delete)) { self.write_pty(b"\x1b[3~"); }
+
+            // Ctrl+letter (C=3, D=4, etc.)
+            if mods.ctrl {
+                let ctrl_keys = [
+                    (egui::Key::A, 1u8), (egui::Key::B, 2), (egui::Key::C, 3), (egui::Key::D, 4),
+                    (egui::Key::E, 5), (egui::Key::F, 6), (egui::Key::G, 7), (egui::Key::H, 8),
+                    (egui::Key::K, 11), (egui::Key::L, 12), (egui::Key::N, 14),
+                    (egui::Key::P, 16), (egui::Key::R, 18), (egui::Key::U, 21),
+                    (egui::Key::W, 23), (egui::Key::Z, 26),
+                ];
+                for (key, code) in &ctrl_keys {
+                    if ctx.input(|i| i.key_pressed(*key)) {
+                        self.write_pty(&[*code]);
                     }
-                    self.handle_key(*key, modifiers);
-                    // Reset autocomplete on Enter
-                    if *key == egui::Key::Enter { self.autocomplete.reset(); }
                 }
-                _ => {}
             }
         }
 
