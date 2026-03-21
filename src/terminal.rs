@@ -211,8 +211,30 @@ impl TerminalTab {
             self.autocomplete.update(&input);
         }
 
-        // Special keys — check each directly
+        // Special keys
         let mods = ctx.input(|i| i.modifiers);
+
+        // ─── macOS Cmd shortcuts (not terminal control codes) ───
+        // Cmd+V → paste clipboard into PTY
+        if ctx.input(|i| i.key_pressed(egui::Key::V) && i.modifiers.command) {
+            if let Some(text) = ui.ctx().input(|i| i.events.iter().find_map(|e| {
+                if let egui::Event::Paste(t) = e { Some(t.clone()) } else { None }
+            })) {
+                self.write_pty(text.as_bytes());
+            }
+        }
+        // Cmd+Left → Home (start of line)
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft) && i.modifiers.command) {
+            self.write_pty(b"\x01");
+        }
+        // Cmd+Right → End (end of line)
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight) && i.modifiers.command) {
+            self.write_pty(b"\x05");
+        }
+        // Cmd+Backspace → clear line
+        if ctx.input(|i| i.key_pressed(egui::Key::Backspace) && i.modifiers.command) {
+            self.write_pty(b"\x15");
+        }
 
         // Autocomplete interception
         if self.autocomplete.visible {
@@ -238,9 +260,8 @@ impl TerminalTab {
                 self.write_pty(data);
                 self.autocomplete.reset();
             }
-            if ctx.input(|i| i.key_pressed(egui::Key::Backspace)) {
-                if mods.command { self.write_pty(b"\x15"); }
-                else if mods.alt { self.write_pty(b"\x17"); }
+            if ctx.input(|i| i.key_pressed(egui::Key::Backspace) && !i.modifiers.command) {
+                if mods.alt { self.write_pty(b"\x17"); }
                 else { self.write_pty(&[0x7f]); }
             }
             if ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
@@ -255,14 +276,12 @@ impl TerminalTab {
             if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
                 self.write_pty(b"\x1b[B");
             }
-            if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
-                if mods.command { self.write_pty(b"\x05"); }
-                else if mods.alt { self.write_pty(b"\x1bf"); }
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight) && !i.modifiers.command) {
+                if mods.alt { self.write_pty(b"\x1bf"); }
                 else { self.write_pty(b"\x1b[C"); }
             }
-            if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
-                if mods.command { self.write_pty(b"\x01"); }
-                else if mods.alt { self.write_pty(b"\x1bb"); }
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft) && !i.modifiers.command) {
+                if mods.alt { self.write_pty(b"\x1bb"); }
                 else { self.write_pty(b"\x1b[D"); }
             }
             if ctx.input(|i| i.key_pressed(egui::Key::Home)) { self.write_pty(b"\x01"); }
