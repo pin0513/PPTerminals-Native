@@ -17,6 +17,7 @@ pub struct TerminalTab {
     input_buf: String,
     parser: Arc<Mutex<vt100::Parser>>,
     pub autocomplete: AutocompleteState,
+    frame: u64,
 }
 
 #[derive(Clone)]
@@ -161,6 +162,7 @@ impl TerminalTab {
             input_buf: String::new(),
             parser,
             autocomplete: AutocompleteState::new(),
+            frame: 0,
         }
     }
 
@@ -198,6 +200,8 @@ impl TerminalTab {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        self.frame = self.frame.wrapping_add(1);
+
         // ─── Keyboard input: use ctx.input() for reliable key detection ───
         // Text input (regular characters)
         let text_input: Vec<String> = ctx.input(|i| {
@@ -344,10 +348,8 @@ impl TerminalTab {
                 let y = origin.y + r as f32 * char_h;
                 let is_cursor = r as u16 == cursor_r && col as u16 == cursor_c;
 
-                // Background
-                let bg = if is_cursor {
-                    egui::Color32::from_rgb(88, 166, 255)
-                } else if cell.bg != egui::Color32::TRANSPARENT {
+                // Background (normal cell bg, NOT cursor)
+                let bg = if cell.bg != egui::Color32::TRANSPARENT {
                     cell.bg
                 } else {
                     egui::Color32::TRANSPARENT
@@ -360,8 +362,23 @@ impl TerminalTab {
                     );
                 }
 
-                // Text
-                let fg = if is_cursor { egui::Color32::from_rgb(10, 14, 20) } else { cell.fg };
+                // Cursor: thin blinking bar (2px wide)
+                if is_cursor {
+                    let blink = ((self.frame as f32 * 0.06).sin() > 0.0) || self.frame < 30;
+                    if blink {
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(
+                                egui::Pos2::new(x, y + 1.0),
+                                egui::Vec2::new(2.0, char_h - 2.0),
+                            ),
+                            0.0,
+                            egui::Color32::from_rgb(88, 166, 255),
+                        );
+                    }
+                }
+
+                // Text (normal color, cursor doesn't change text color)
+                let fg = cell.fg;
                 if cell.ch != " " {
                     let f = if cell.bold {
                         egui::FontId::new(14.0, egui::FontFamily::Monospace)
