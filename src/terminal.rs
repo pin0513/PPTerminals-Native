@@ -214,7 +214,17 @@ impl TerminalTab {
         // Special keys
         let mods = ctx.input(|i| i.modifiers);
 
-        // ─── macOS Cmd shortcuts (not terminal control codes) ───
+        // ─── macOS Cmd shortcuts ───
+        // Cmd+A → select all (copy all visible terminal text to clipboard)
+        if ctx.input(|i| i.key_pressed(egui::Key::A) && i.modifiers.command) {
+            let all_text = self.get_visible_text();
+            ctx.copy_text(all_text);
+        }
+        // Cmd+C → copy current line (or all if nothing specific)
+        if ctx.input(|i| i.key_pressed(egui::Key::C) && i.modifiers.command) {
+            let line = self.get_current_line();
+            ctx.copy_text(line);
+        }
         // Cmd+V → paste clipboard into PTY
         if ctx.input(|i| i.key_pressed(egui::Key::V) && i.modifiers.command) {
             if let Some(text) = ui.ctx().input(|i| i.events.iter().find_map(|e| {
@@ -223,11 +233,11 @@ impl TerminalTab {
                 self.write_pty(text.as_bytes());
             }
         }
-        // Cmd+Left → Home (start of line)
+        // Cmd+Left → Home
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft) && i.modifiers.command) {
             self.write_pty(b"\x01");
         }
-        // Cmd+Right → End (end of line)
+        // Cmd+Right → End
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight) && i.modifiers.command) {
             self.write_pty(b"\x05");
         }
@@ -506,6 +516,44 @@ impl TerminalTab {
 
     pub fn write_pty_public(&mut self, data: &[u8]) {
         self.write_pty(data);
+    }
+
+    /// Get all visible terminal text (for Cmd+A)
+    fn get_visible_text(&self) -> String {
+        let p = self.parser.lock().unwrap();
+        let screen = p.screen();
+        let (rows, cols) = screen.size();
+        let mut text = String::new();
+        for r in 0..rows {
+            let mut line = String::new();
+            for c in 0..cols {
+                if let Some(cell) = screen.cell(r, c) {
+                    let s = cell.contents();
+                    if cell.is_wide_continuation() { continue; }
+                    line.push_str(if s.is_empty() { " " } else { s });
+                }
+            }
+            text.push_str(line.trim_end());
+            text.push('\n');
+        }
+        text.trim_end().to_string()
+    }
+
+    /// Get current line text (for Cmd+C)
+    fn get_current_line(&self) -> String {
+        let p = self.parser.lock().unwrap();
+        let screen = p.screen();
+        let (cr, _) = screen.cursor_position();
+        let cols = screen.size().1;
+        let mut line = String::new();
+        for c in 0..cols {
+            if let Some(cell) = screen.cell(cr, c) {
+                let s = cell.contents();
+                if cell.is_wide_continuation() { continue; }
+                line.push_str(if s.is_empty() { " " } else { s });
+            }
+        }
+        line.trim_end().to_string()
     }
 
     fn write_pty(&mut self, data: &[u8]) {
