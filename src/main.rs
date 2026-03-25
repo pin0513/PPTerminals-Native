@@ -129,6 +129,13 @@ impl eframe::App for App {
         // Cmd+P → Quick Open
         let open_quick_open = ctx.input(|i| i.key_pressed(egui::Key::P) && i.modifiers.command && !i.modifiers.shift);
 
+        // Cmd+O → open current directory in Finder
+        let open_finder = ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.command);
+        if open_finder {
+            let cwd = self.tabs.get(self.active_tab).map(|t| t.cwd.clone()).unwrap_or_else(|| ".".to_string());
+            let _ = std::process::Command::new("open").arg(&cwd).spawn();
+        }
+
         if new_tab { self.new_tab(); }
         if close_tab && !self.tabs.is_empty() { self.request_close_tab(self.active_tab); }
         if toggle_explorer { self.show_explorer = !self.show_explorer; }
@@ -172,6 +179,12 @@ impl eframe::App for App {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("New Terminal  ⌘T").clicked() { self.new_tab(); ui.close_menu(); }
+                    if ui.button("Open in Finder  ⌘O").clicked() {
+                        let cwd = self.tabs.get(self.active_tab).map(|t| t.cwd.clone()).unwrap_or_else(|| ".".to_string());
+                        let _ = std::process::Command::new("open").arg(&cwd).spawn();
+                        ui.close_menu();
+                    }
+                    ui.separator();
                     if ui.button("Close Tab  ⌘W").clicked() {
                         if !self.tabs.is_empty() { self.request_close_tab(self.active_tab); }
                         ui.close_menu();
