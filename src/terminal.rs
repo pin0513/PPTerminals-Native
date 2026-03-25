@@ -10,6 +10,7 @@ pub struct TerminalTab {
     pub title: String,
     pub cwd: String,
     writer: Option<Box<dyn Write + Send>>,
+    master: Option<Box<dyn MasterPty + Send>>,
     screen_buffer: Arc<Mutex<Vec<Vec<Cell>>>>,
     cursor: Arc<Mutex<(u16, u16)>>,
     cols: u16,
@@ -159,6 +160,7 @@ impl TerminalTab {
             title,
             cwd,
             writer: Some(writer),
+            master: Some(pair.master),
             screen_buffer,
             cursor,
             cols,
@@ -208,6 +210,30 @@ impl TerminalTab {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.frame = self.frame.wrapping_add(1);
+
+        // ─── Dynamic resize: match terminal cols/rows to available space ───
+        let char_w_for_size = 8.4_f32;
+        let char_h_for_size = 18.0_f32;
+        let avail = ui.available_size();
+        let new_cols = (avail.x / char_w_for_size).max(10.0) as u16;
+        let new_rows = (avail.y / char_h_for_size).max(5.0) as u16;
+        if new_cols != self.cols || new_rows != self.rows {
+            self.cols = new_cols;
+            self.rows = new_rows;
+            // Resize vt100 parser
+            if let Ok(mut p) = self.parser.lock() {
+                p.screen_mut().set_size(new_rows, new_cols);
+            }
+            // Resize PTY (sends SIGWINCH to running process)
+            if let Some(ref master) = self.master {
+                let _ = master.resize(PtySize {
+                    rows: new_rows,
+                    cols: new_cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                });
+            }
+        }
 
         // ─── Keyboard input: use ctx.input() for reliable key detection ───
         // Text input (regular characters)
