@@ -131,13 +131,20 @@ impl FileExplorer {
                 let file_ic = file_icon(&node.entry.name);
                 let label_text = format!("{} {}", file_ic, node.entry.name);
 
+                // Truncate long filenames
+                let max_chars = 40;
+                let display_name = if node.entry.name.chars().count() > max_chars {
+                    format!("{}…", node.entry.name.chars().take(max_chars).collect::<String>())
+                } else {
+                    node.entry.name.clone()
+                };
+                let label_text = format!("{} {}", file_ic, display_name);
+
                 let resp = ui.selectable_label(false, egui::RichText::new(&label_text).color(color));
 
-                // Click → open file preview
                 if resp.clicked() {
                     *preview_file = Some(path_str.clone());
                 }
-                // Drag → set payload
                 if resp.dragged() {
                     egui::DragAndDrop::set_payload(ui.ctx(), path_str.clone());
                 }
