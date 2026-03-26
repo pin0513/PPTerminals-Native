@@ -104,21 +104,21 @@ impl FileExplorer {
             if node.entry.is_dir {
                 let icon = if node.expanded { "▾" } else { "▸" };
                 let color = egui::Color32::from_rgb(230, 230, 230);
+                let label_text = format!("{} 📁 {}", icon, node.entry.name);
 
-                // Drag = copy path, Click = expand/collapse
-                let resp = ui.dnd_drag_source(item_id, path_str.clone(), |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(icon).color(egui::Color32::from_rgb(139, 148, 158)));
-                        ui.label(egui::RichText::new(format!("📁 {}", node.entry.name)).color(color));
-                    });
-                }).response;
+                // Use selectable_label for click, manual drag detection
+                let resp = ui.selectable_label(false, egui::RichText::new(&label_text).color(color));
 
-                // Click → expand/collapse directory
+                // Click → expand/collapse
                 if resp.clicked() {
                     node.expanded = !node.expanded;
                     if node.expanded && node.children.is_none() {
                         node.children = Some(load_dir(&node.entry.path));
                     }
+                }
+                // Drag → set payload for terminal drop zone
+                if resp.dragged() {
+                    egui::DragAndDrop::set_payload(ui.ctx(), path_str.clone());
                 }
                 resp.on_hover_text(&path_str);
             } else {
@@ -129,15 +129,17 @@ impl FileExplorer {
                     egui::Color32::from_rgb(200, 200, 200)
                 };
                 let file_ic = file_icon(&node.entry.name);
+                let label_text = format!("{} {}", file_ic, node.entry.name);
 
-                // Drag = copy path, Click = open preview
-                let resp = ui.dnd_drag_source(item_id, path_str.clone(), |ui| {
-                    ui.label(egui::RichText::new(format!("{} {}", file_ic, node.entry.name)).color(color));
-                }).response;
+                let resp = ui.selectable_label(false, egui::RichText::new(&label_text).color(color));
 
                 // Click → open file preview
                 if resp.clicked() {
                     *preview_file = Some(path_str.clone());
+                }
+                // Drag → set payload
+                if resp.dragged() {
+                    egui::DragAndDrop::set_payload(ui.ctx(), path_str.clone());
                 }
                 resp.on_hover_text(&path_str);
             }
