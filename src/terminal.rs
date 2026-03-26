@@ -19,6 +19,8 @@ pub struct TerminalTab {
     parser: Arc<Mutex<vt100::Parser>>,
     pub autocomplete: AutocompleteState,
     frame: u64,
+    /// CWD detected from shell prompt (updated by reader thread)
+    detected_cwd: Arc<Mutex<Option<String>>>,
     // Mouse selection
     selection_start: Option<(usize, usize)>, // (row, col)
     selection_end: Option<(usize, usize)>,
@@ -82,6 +84,7 @@ impl TerminalTab {
         let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 1000)));
         let screen_buffer = Arc::new(Mutex::new(Vec::new()));
         let cursor = Arc::new(Mutex::new((0u16, 0u16)));
+        let detected_cwd: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
         let cwd = dirs::home_dir()
             .map(|p| p.to_string_lossy().to_string())
@@ -108,6 +111,7 @@ impl TerminalTab {
         let parser_clone = parser.clone();
         let buffer_clone = screen_buffer.clone();
         let cursor_clone = cursor.clone();
+        let cwd_clone = detected_cwd.clone();
         thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
@@ -147,6 +151,46 @@ impl TerminalTab {
                         *buffer_clone.lock().unwrap() = rows_out;
                         let cpos = screen.cursor_position();
                         *cursor_clone.lock().unwrap() = (cpos.0, cpos.1);
+
+                        // Detect CWD from prompt line (e.g. "user@host DIR %")
+                        let cursor_row = cpos.0;
+                        if cursor_row > 0 {
+                            let prev_row = cursor_row - 1;
+                            let mut line = String::new();
+                            for c in 0..sc {
+                                if let Some(cell) = screen.cell(prev_row, c) {
+                                    let s = cell.contents();
+                                    if !cell.is_wide_continuation() {
+                                        line.push_str(if s.is_empty() { " " } else { s });
+                                    }
+                                }
+                            }
+                            let line = line.trim();
+                            // zsh prompt: "user@host DIR %"  or "user@host ~ %"
+                            if line.ends_with('%') || line.ends_with('$') || line.ends_with('#') {
+                                // Extract the word before the prompt char
+                                let parts: Vec<&str> = line.rsplitn(2, |c: char| c == '%' || c == '$' || c == '#').collect();
+                                if parts.len() >= 2 {
+                                    let before_prompt = parts[1].trim();
+                                    // Last word is the directory
+                                    if let Some(dir) = before_prompt.split_whitespace().last() {
+                                        let resolved = if dir == "~" {
+                                            dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| "~".to_string())
+                                        } else if dir.starts_with('~') {
+                                            dirs::home_dir().map(|p| p.join(&dir[2..]).to_string_lossy().to_string()).unwrap_or_else(|| dir.to_string())
+                                        } else if dir.starts_with('/') {
+                                            dir.to_string()
+                                        } else {
+                                            // Relative — try to resolve
+                                            dir.to_string()
+                                        };
+                                        if std::path::Path::new(&resolved).is_dir() {
+                                            *cwd_clone.lock().unwrap() = Some(resolved);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     Err(_) => break,
                 }
@@ -169,6 +213,7 @@ impl TerminalTab {
             parser,
             autocomplete: AutocompleteState::new(),
             frame: 0,
+            detected_cwd,
             selection_start: None,
             selection_end: None,
             is_selecting: false,
@@ -210,6 +255,17 @@ impl TerminalTab {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.frame = self.frame.wrapping_add(1);
+
+        // ─── Sync CWD from shell prompt ───
+        if let Some(new_cwd) = self.detected_cwd.lock().unwrap().take() {
+            if new_cwd != self.cwd {
+                self.cwd = new_cwd.clone();
+                self.title = std::path::Path::new(&new_cwd)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| new_cwd.clone());
+            }
+        }
 
         // ─── Dynamic resize: match terminal cols/rows to available space ───
         let char_w_for_size = 8.4_f32;

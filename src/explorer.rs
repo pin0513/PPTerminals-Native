@@ -24,6 +24,18 @@ pub struct FileExplorer {
 }
 
 impl FileExplorer {
+    pub fn set_root(&mut self, path: &str) {
+        let p = PathBuf::from(path);
+        if p.is_dir() && p != self.root {
+            self.root = p;
+            self.tree = load_dir(&self.root);
+        }
+    }
+
+    pub fn root_path(&self) -> &str {
+        self.root.to_str().unwrap_or("")
+    }
+
     pub fn new() -> Self {
         let root = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let tree = load_dir(&root);

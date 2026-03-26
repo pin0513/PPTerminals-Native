@@ -365,6 +365,14 @@ impl eframe::App for App {
             }
         }
 
+        // ─── Sync Explorer to active tab's cwd ───
+        if let Some(tab) = self.tabs.get(self.active_tab) {
+            if tab.cwd != self.explorer.root_path() {
+                let cwd = tab.cwd.clone();
+                self.explorer.set_root(&cwd);
+            }
+        }
+
         // ─── Terminal ───
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(tab) = self.tabs.get_mut(self.active_tab) {
