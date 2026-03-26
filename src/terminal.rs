@@ -571,29 +571,31 @@ impl TerminalTab {
         if self.autocomplete.visible && !self.autocomplete.suggestions.is_empty() {
             let ac_x = origin.x + cursor_c as f32 * char_w;
             let ac_y = origin.y + (cursor_r as f32 + 1.0) * char_h;
+            let popup_w = 420.0_f32;
+            let item_h = 20.0_f32;
+            let popup_h = self.autocomplete.suggestions.len() as f32 * item_h + 22.0;
 
-            let popup_w = 300.0_f32;
-            let item_h = 22.0_f32;
-            let popup_h = self.autocomplete.suggestions.len() as f32 * item_h + 24.0;
+            // Clamp to screen bounds
+            let screen_w = ui.available_width() + origin.x;
+            let ac_x = ac_x.min(screen_w - popup_w - 8.0).max(origin.x);
 
-            // Background
-            painter.rect_filled(
-                egui::Rect::from_min_size(egui::Pos2::new(ac_x, ac_y), egui::Vec2::new(popup_w, popup_h)),
-                4.0, egui::Color32::from_rgb(28, 33, 40),
-            );
-            painter.rect_stroke(
-                egui::Rect::from_min_size(egui::Pos2::new(ac_x, ac_y), egui::Vec2::new(popup_w, popup_h)),
-                4.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(48, 54, 61)), egui::StrokeKind::Outside,
-            );
+            let popup_rect = egui::Rect::from_min_size(egui::Pos2::new(ac_x, ac_y), egui::Vec2::new(popup_w, popup_h));
+
+            // Shadow
+            painter.rect_filled(popup_rect.translate(egui::Vec2::new(2.0, 2.0)), 6.0, egui::Color32::from_rgba_premultiplied(0, 0, 0, 80));
+            // Solid background (fully opaque)
+            painter.rect_filled(popup_rect, 6.0, egui::Color32::from_rgb(22, 27, 34));
+            // Border
+            painter.rect_stroke(popup_rect, 6.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(48, 54, 61)), egui::StrokeKind::Outside);
 
             for (i, s) in self.autocomplete.suggestions.iter().enumerate() {
-                let iy = ac_y + 2.0 + i as f32 * item_h;
+                let iy = ac_y + 1.0 + i as f32 * item_h;
                 let selected = i == self.autocomplete.selected;
 
                 if selected {
                     painter.rect_filled(
-                        egui::Rect::from_min_size(egui::Pos2::new(ac_x + 2.0, iy), egui::Vec2::new(popup_w - 4.0, item_h)),
-                        2.0, egui::Color32::from_rgb(38, 79, 120),
+                        egui::Rect::from_min_size(egui::Pos2::new(ac_x + 3.0, iy), egui::Vec2::new(popup_w - 6.0, item_h)),
+                        3.0, egui::Color32::from_rgb(31, 111, 235),
                     );
                 }
 
@@ -610,25 +612,30 @@ impl TerminalTab {
                     crate::autocomplete::CompletionKind::Subcommand => egui::Color32::from_rgb(63, 185, 80),
                 };
 
-                painter.text(egui::Pos2::new(ac_x + 8.0, iy + 3.0), egui::Align2::LEFT_TOP, kind_icon,
+                let name_color = if selected { egui::Color32::WHITE } else { egui::Color32::from_rgb(230, 237, 243) };
+                let desc_color = if selected { egui::Color32::from_rgb(180, 190, 200) } else { egui::Color32::from_rgb(100, 110, 120) };
+
+                painter.text(egui::Pos2::new(ac_x + 8.0, iy + 2.0), egui::Align2::LEFT_TOP, kind_icon,
                     egui::FontId::monospace(10.0), kind_color);
-                painter.text(egui::Pos2::new(ac_x + 22.0, iy + 3.0), egui::Align2::LEFT_TOP, &s.name,
-                    egui::FontId::monospace(12.0), egui::Color32::from_rgb(230, 237, 243));
+                painter.text(egui::Pos2::new(ac_x + 24.0, iy + 2.0), egui::Align2::LEFT_TOP, &s.name,
+                    egui::FontId::monospace(12.0), name_color);
                 if !s.description.is_empty() {
-                    let desc: String = s.description.chars().take(30).collect();
-                    painter.text(egui::Pos2::new(ac_x + 140.0, iy + 4.0), egui::Align2::LEFT_TOP, &desc,
-                        egui::FontId::monospace(10.0), egui::Color32::from_rgb(72, 79, 88));
+                    let desc: String = s.description.chars().take(35).collect();
+                    painter.text(egui::Pos2::new(ac_x + 200.0, iy + 3.0), egui::Align2::LEFT_TOP, &desc,
+                        egui::FontId::monospace(10.0), desc_color);
                 }
             }
 
-            // Hint
-            painter.text(
-                egui::Pos2::new(ac_x + 8.0, ac_y + popup_h - 18.0),
-                egui::Align2::LEFT_TOP,
-                "Tab accept  ↑↓ navigate  Esc dismiss",
-                egui::FontId::monospace(9.0),
-                egui::Color32::from_rgb(72, 79, 88),
+            // Hint bar
+            let hint_y = ac_y + popup_h - 17.0;
+            painter.rect_filled(
+                egui::Rect::from_min_size(egui::Pos2::new(ac_x, hint_y - 1.0), egui::Vec2::new(popup_w, 18.0)),
+                egui::Rounding { nw: 0, ne: 0, sw: 6, se: 6 },
+                egui::Color32::from_rgb(13, 17, 23),
             );
+            painter.text(egui::Pos2::new(ac_x + 8.0, hint_y), egui::Align2::LEFT_TOP,
+                "Tab accept  ↑↓ navigate  Esc dismiss",
+                egui::FontId::monospace(9.0), egui::Color32::from_rgb(72, 79, 88));
         }
     }
 
