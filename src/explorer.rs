@@ -19,8 +19,10 @@ pub struct FileExplorer {
     root: PathBuf,
     tree: Vec<TreeNode>,
     show_hidden: bool,
-    /// Path to paste into terminal (set on click, consumed by App)
+    /// Path to paste into terminal (set on drag-drop, consumed by App)
     pub pending_path: Option<String>,
+    /// File to preview (set on click, consumed by App)
+    pub pending_preview: Option<String>,
 }
 
 impl FileExplorer {
@@ -39,7 +41,7 @@ impl FileExplorer {
     pub fn new() -> Self {
         let root = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let tree = load_dir(&root);
-        Self { root, tree, show_hidden: false, pending_path: None }
+        Self { root, tree, show_hidden: false, pending_path: None, pending_preview: None }
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -68,15 +70,15 @@ impl FileExplorer {
         egui::ScrollArea::vertical().show(ui, |ui| {
             let show_hidden = self.show_hidden;
             let mut navigate_to: Option<PathBuf> = None;
-            let mut paste_path: Option<String> = None;
+            let mut preview_file: Option<String> = None;
 
             for node in &mut self.tree {
                 if !show_hidden && node.entry.is_hidden { continue; }
-                Self::render_node(ui, node, 0, show_hidden, &mut navigate_to, &mut paste_path);
+                Self::render_node(ui, node, 0, show_hidden, &mut navigate_to, &mut preview_file);
             }
 
-            if paste_path.is_some() {
-                self.pending_path = paste_path;
+            if preview_file.is_some() {
+                self.pending_preview = preview_file;
             }
 
             if let Some(path) = navigate_to {
@@ -90,7 +92,7 @@ impl FileExplorer {
         ui.label(egui::RichText::new(self.root.to_string_lossy().to_string()).small().color(egui::Color32::from_rgb(72, 79, 88)));
     }
 
-    fn render_node(ui: &mut egui::Ui, node: &mut TreeNode, depth: usize, show_hidden: bool, navigate_to: &mut Option<PathBuf>, paste_path: &mut Option<String>) {
+    fn render_node(ui: &mut egui::Ui, node: &mut TreeNode, depth: usize, show_hidden: bool, navigate_to: &mut Option<PathBuf>, preview_file: &mut Option<String>) {
         let indent = depth as f32 * 16.0 + 4.0;
 
         ui.horizontal(|ui| {
@@ -101,17 +103,17 @@ impl FileExplorer {
 
             if node.entry.is_dir {
                 let icon = if node.expanded { "▾" } else { "▸" };
-                if ui.small_button(icon).clicked() {
-                    node.expanded = !node.expanded;
-                    if node.expanded && node.children.is_none() {
-                        node.children = Some(load_dir(&node.entry.path));
-                    }
-                }
                 let color = egui::Color32::from_rgb(230, 230, 230);
-                // Draggable folder
+
+                // Drag = copy path, Click = expand/collapse
                 let resp = ui.dnd_drag_source(item_id, path_str.clone(), |ui| {
-                    ui.label(egui::RichText::new(format!("📁 {}", node.entry.name)).color(color));
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(icon).color(egui::Color32::from_rgb(139, 148, 158)));
+                        ui.label(egui::RichText::new(format!("📁 {}", node.entry.name)).color(color));
+                    });
                 }).response;
+
+                // Click → expand/collapse directory
                 if resp.clicked() {
                     node.expanded = !node.expanded;
                     if node.expanded && node.children.is_none() {
@@ -127,10 +129,16 @@ impl FileExplorer {
                     egui::Color32::from_rgb(200, 200, 200)
                 };
                 let file_ic = file_icon(&node.entry.name);
-                // Draggable file
+
+                // Drag = copy path, Click = open preview
                 let resp = ui.dnd_drag_source(item_id, path_str.clone(), |ui| {
                     ui.label(egui::RichText::new(format!("{} {}", file_ic, node.entry.name)).color(color));
                 }).response;
+
+                // Click → open file preview
+                if resp.clicked() {
+                    *preview_file = Some(path_str.clone());
+                }
                 resp.on_hover_text(&path_str);
             }
         });
@@ -140,7 +148,7 @@ impl FileExplorer {
             if let Some(ref mut children) = node.children {
                 for child in children.iter_mut() {
                     if !show_hidden && child.entry.is_hidden { continue; }
-                    Self::render_node(ui, child, depth + 1, show_hidden, navigate_to, paste_path);
+                    Self::render_node(ui, child, depth + 1, show_hidden, navigate_to, preview_file);
                 }
             }
         }

@@ -60,6 +60,8 @@ struct App {
     tab_completed: Vec<bool>,
     // Quick Open (Cmd+P)
     quick_open: QuickOpen,
+    // File preview
+    preview_file: Option<String>,
 }
 
 impl App {
@@ -75,6 +77,7 @@ impl App {
             show_switcher: false,
             tab_completed: vec![false],
             quick_open: QuickOpen::new(),
+            preview_file: None,
         }
     }
 
@@ -351,11 +354,9 @@ impl eframe::App for App {
             });
         }
 
-        // ─── Explorer → Terminal path paste ───
-        if let Some(path) = self.explorer.pending_path.take() {
-            if let Some(tab) = self.tabs.get_mut(self.active_tab) {
-                tab.write_pty_public(path.as_bytes());
-            }
+        // ─── Explorer → file preview ───
+        if let Some(path) = self.explorer.pending_preview.take() {
+            self.preview_file = Some(path);
         }
 
         // ─── Quick Open → Terminal path paste ───
@@ -371,6 +372,47 @@ impl eframe::App for App {
                 let cwd = tab.cwd.clone();
                 self.explorer.set_root(&cwd);
             }
+        }
+
+        // ─── File Preview (right panel) ───
+        if let Some(ref path) = self.preview_file.clone() {
+            egui::SidePanel::right("file_preview").default_width(400.0).min_width(250.0).show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let name = std::path::Path::new(path).file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    ui.strong(&name);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("×").clicked() {
+                            self.preview_file = None;
+                        }
+                        // Copy path button
+                        if ui.small_button("📋").on_hover_text("Copy path").clicked() {
+                            ctx.copy_text(path.clone());
+                        }
+                    });
+                });
+                ui.label(egui::RichText::new(path).small().color(egui::Color32::from_rgb(72, 79, 88)));
+                ui.separator();
+
+                // Read and display file content
+                match std::fs::read_to_string(path) {
+                    Ok(content) => {
+                        egui::ScrollArea::both().show(ui, |ui| {
+                            // Line numbers + content
+                            for (i, line) in content.lines().enumerate() {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(format!("{:4}", i + 1)).monospace().color(egui::Color32::from_rgb(72, 79, 88)));
+                                    ui.label(egui::RichText::new(line).monospace().color(egui::Color32::from_rgb(200, 200, 200)));
+                                });
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        ui.label(egui::RichText::new(format!("Cannot read: {}", e)).color(egui::Color32::from_rgb(248, 81, 73)));
+                    }
+                }
+            });
         }
 
         // ─── Terminal ───
