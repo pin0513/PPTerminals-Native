@@ -62,6 +62,13 @@ struct App {
     quick_open: QuickOpen,
     // File preview
     preview_file: Option<String>,
+    preview_mode: PreviewMode,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+enum PreviewMode {
+    Rendered,
+    Raw,
 }
 
 impl App {
@@ -78,6 +85,7 @@ impl App {
             tab_completed: vec![false],
             quick_open: QuickOpen::new(),
             preview_file: None,
+            preview_mode: PreviewMode::Rendered,
         }
     }
 
@@ -347,9 +355,29 @@ impl eframe::App for App {
             });
         });
 
-        // ─── Explorer sidebar ───
+        // ─── Explorer sidebar with session panel ───
         if self.show_explorer {
             egui::SidePanel::left("explorer").default_width(240.0).min_width(180.0).show(ctx, |ui| {
+                // Explorer takes most space
+                let avail = ui.available_height();
+                let explorer_h = (avail * 0.7).max(200.0);
+
+                egui::TopBottomPanel::bottom("session_panel").min_height(60.0).show_inside(ui, |ui| {
+                    ui.separator();
+                    ui.label(egui::RichText::new("CLAUDE SESSIONS").small().strong().color(egui::Color32::from_rgb(88, 166, 255)));
+
+                    // Show Claude status from active terminal
+                    if let Some(tab) = self.tabs.get(self.active_tab) {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(&tab.hotkey).small().monospace().color(egui::Color32::from_rgb(88, 166, 255)));
+                            ui.label(egui::RichText::new(&tab.title).small().color(egui::Color32::from_rgb(200, 200, 200)));
+                        });
+                        ui.label(egui::RichText::new(&tab.cwd).small().color(egui::Color32::from_rgb(72, 79, 88)));
+                    }
+
+                    if ui.small_button("🐔 Farm").clicked() { self.show_farm = !self.show_farm; }
+                });
+
                 self.explorer.ui(ui);
             });
         }
@@ -376,35 +404,45 @@ impl eframe::App for App {
 
         // ─── File Preview (right panel) ───
         if let Some(ref path) = self.preview_file.clone() {
-            egui::SidePanel::right("file_preview").default_width(400.0).min_width(250.0).show(ctx, |ui| {
+            let is_md = path.ends_with(".md") || path.ends_with(".markdown");
+            egui::SidePanel::right("file_preview").default_width(420.0).min_width(250.0).show(ctx, |ui| {
+                // Header
                 ui.horizontal(|ui| {
                     let name = std::path::Path::new(path).file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_default();
                     ui.strong(&name);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("×").clicked() {
-                            self.preview_file = None;
-                        }
-                        // Copy path button
-                        if ui.small_button("📋").on_hover_text("Copy path").clicked() {
-                            ctx.copy_text(path.clone());
+                        if ui.small_button("×").clicked() { self.preview_file = None; }
+                        if ui.small_button("📋").on_hover_text("Copy path").clicked() { ctx.copy_text(path.clone()); }
+                        // Mode toggle for markdown files
+                        if is_md {
+                            if ui.selectable_label(self.preview_mode == PreviewMode::Raw, "Raw").clicked() {
+                                self.preview_mode = PreviewMode::Raw;
+                            }
+                            if ui.selectable_label(self.preview_mode == PreviewMode::Rendered, "Rendered").clicked() {
+                                self.preview_mode = PreviewMode::Rendered;
+                            }
                         }
                     });
                 });
                 ui.label(egui::RichText::new(path).small().color(egui::Color32::from_rgb(72, 79, 88)));
                 ui.separator();
 
-                // Read and display file content
                 match std::fs::read_to_string(path) {
                     Ok(content) => {
                         egui::ScrollArea::both().show(ui, |ui| {
-                            // Line numbers + content
-                            for (i, line) in content.lines().enumerate() {
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(format!("{:4}", i + 1)).monospace().color(egui::Color32::from_rgb(72, 79, 88)));
-                                    ui.label(egui::RichText::new(line).monospace().color(egui::Color32::from_rgb(200, 200, 200)));
-                                });
+                            if is_md && self.preview_mode == PreviewMode::Rendered {
+                                // Rendered markdown
+                                render_markdown(ui, &content);
+                            } else {
+                                // Raw with line numbers
+                                for (i, line) in content.lines().enumerate() {
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new(format!("{:4}", i + 1)).monospace().color(egui::Color32::from_rgb(72, 79, 88)));
+                                        ui.label(egui::RichText::new(line).monospace().color(egui::Color32::from_rgb(200, 200, 200)));
+                                    });
+                                }
                             }
                         });
                     }
@@ -494,4 +532,99 @@ impl eframe::App for App {
                 });
         }
     }
+}
+
+// ─── Markdown Renderer ───
+fn render_markdown(ui: &mut egui::Ui, text: &str) {
+    let heading_color = egui::Color32::from_rgb(230, 237, 243);
+    let text_color = egui::Color32::from_rgb(200, 200, 200);
+    let code_bg = egui::Color32::from_rgb(22, 27, 34);
+    let link_color = egui::Color32::from_rgb(88, 166, 255);
+    let quote_color = egui::Color32::from_rgb(139, 148, 158);
+
+    let mut in_code_block = false;
+
+    for line in text.lines() {
+        if line.starts_with("```") {
+            in_code_block = !in_code_block;
+            if in_code_block {
+                ui.add_space(4.0);
+            }
+            continue;
+        }
+
+        if in_code_block {
+            let frame = egui::Frame::NONE.fill(code_bg).inner_margin(egui::Margin::symmetric(8, 2));
+            frame.show(ui, |ui| {
+                ui.label(egui::RichText::new(line).monospace().color(egui::Color32::from_rgb(230, 230, 230)));
+            });
+            continue;
+        }
+
+        if line.starts_with("# ") {
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new(&line[2..]).heading().strong().color(heading_color));
+            ui.separator();
+        } else if line.starts_with("## ") {
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new(&line[3..]).size(18.0).strong().color(heading_color));
+        } else if line.starts_with("### ") {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(&line[4..]).size(16.0).strong().color(heading_color));
+        } else if line.starts_with("#### ") {
+            ui.label(egui::RichText::new(&line[5..]).size(14.0).strong().color(heading_color));
+        } else if line.starts_with("> ") {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("│").color(link_color));
+                ui.label(egui::RichText::new(&line[2..]).italics().color(quote_color));
+            });
+        } else if line.starts_with("- ") || line.starts_with("* ") {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("  •").color(quote_color));
+                render_inline(ui, &line[2..], text_color, link_color);
+            });
+        } else if line.starts_with("---") {
+            ui.separator();
+        } else if line.trim().is_empty() {
+            ui.add_space(4.0);
+        } else if line.starts_with("| ") {
+            // Table row
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(line).monospace().size(12.0).color(text_color));
+            });
+        } else {
+            render_inline(ui, line, text_color, link_color);
+        }
+    }
+}
+
+fn render_inline(ui: &mut egui::Ui, text: &str, text_color: egui::Color32, link_color: egui::Color32) {
+    // Simple inline rendering: **bold**, `code`, [link]
+    let mut remaining = text;
+    ui.horizontal_wrapped(|ui| {
+        while !remaining.is_empty() {
+            if let Some(pos) = remaining.find("**") {
+                if pos > 0 {
+                    ui.label(egui::RichText::new(&remaining[..pos]).color(text_color));
+                }
+                remaining = &remaining[pos + 2..];
+                if let Some(end) = remaining.find("**") {
+                    ui.label(egui::RichText::new(&remaining[..end]).strong().color(text_color));
+                    remaining = &remaining[end + 2..];
+                }
+            } else if let Some(pos) = remaining.find('`') {
+                if pos > 0 {
+                    ui.label(egui::RichText::new(&remaining[..pos]).color(text_color));
+                }
+                remaining = &remaining[pos + 1..];
+                if let Some(end) = remaining.find('`') {
+                    ui.label(egui::RichText::new(&remaining[..end]).monospace().background_color(egui::Color32::from_rgb(22, 27, 34)).color(egui::Color32::from_rgb(240, 136, 62)));
+                    remaining = &remaining[end + 1..];
+                }
+            } else {
+                ui.label(egui::RichText::new(remaining).color(text_color));
+                break;
+            }
+        }
+    });
 }

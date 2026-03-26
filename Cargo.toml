@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 alacritty_terminal = "0.25.1"
+comrak = "0.51.0"
 dirs = "6.0.0"
 eframe = "0.33.3"
 egui = "0.33.3"
