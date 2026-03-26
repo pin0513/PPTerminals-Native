@@ -362,20 +362,42 @@ impl eframe::App for App {
                 let avail = ui.available_height();
                 let explorer_h = (avail * 0.7).max(200.0);
 
-                egui::TopBottomPanel::bottom("session_panel").min_height(60.0).show_inside(ui, |ui| {
-                    ui.separator();
-                    ui.label(egui::RichText::new("CLAUDE SESSIONS").small().strong().color(egui::Color32::from_rgb(88, 166, 255)));
-
-                    // Show Claude status from active terminal
-                    if let Some(tab) = self.tabs.get(self.active_tab) {
+                egui::TopBottomPanel::bottom("session_panel").min_height(80.0).show_inside(ui, |ui| {
+                    let panel_bg = egui::Color32::from_rgb(13, 17, 23);
+                    let frame = egui::Frame::NONE.fill(panel_bg).inner_margin(egui::Margin::symmetric(8, 6));
+                    frame.show(ui, |ui| {
+                        // Header
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(&tab.hotkey).small().monospace().color(egui::Color32::from_rgb(88, 166, 255)));
-                            ui.label(egui::RichText::new(&tab.title).small().color(egui::Color32::from_rgb(200, 200, 200)));
+                            ui.label(egui::RichText::new("▸ SESSIONS").size(9.0).strong().color(egui::Color32::from_rgb(88, 166, 255)));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.small_button("🐔").on_hover_text("Agent Farm").clicked() {
+                                    self.show_farm = !self.show_farm;
+                                }
+                            });
                         });
-                        ui.label(egui::RichText::new(&tab.cwd).small().color(egui::Color32::from_rgb(72, 79, 88)));
-                    }
 
-                    if ui.small_button("🐔 Farm").clicked() { self.show_farm = !self.show_farm; }
+                        ui.add_space(4.0);
+
+                        // Active sessions
+                        for (i, tab) in self.tabs.iter().enumerate() {
+                            let is_active = i == self.active_tab;
+                            let dot_color = if is_active {
+                                egui::Color32::from_rgb(63, 185, 80)
+                            } else {
+                                egui::Color32::from_rgb(72, 79, 88)
+                            };
+
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("●").size(8.0).color(dot_color));
+                                ui.label(egui::RichText::new(&tab.hotkey).size(10.0).monospace().strong().color(
+                                    if is_active { egui::Color32::from_rgb(88, 166, 255) } else { egui::Color32::from_rgb(72, 79, 88) }
+                                ));
+                                ui.label(egui::RichText::new(&tab.title).size(11.0).color(
+                                    if is_active { egui::Color32::from_rgb(200, 200, 200) } else { egui::Color32::from_rgb(100, 100, 100) }
+                                ));
+                            });
+                        }
+                    });
                 });
 
                 self.explorer.ui(ui);
